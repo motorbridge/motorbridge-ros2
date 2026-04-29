@@ -58,6 +58,7 @@ CLI options:
 
 ```text
 motorbridge_ros2 -c <manifest.yaml>
+motorbridge_ros2 --config <manifest.yaml>
 motorbridge_ros2 --help
 motorbridge_ros2 --version
 ```
@@ -90,6 +91,12 @@ Run from the repository root:
 .\target\release\motorbridge_ros2.exe -c motorbridge_manifest.yaml
 ```
 
+Development run:
+
+```powershell
+cargo run --release -- -c motorbridge_manifest.yaml
+```
+
 Windows CAN notes:
 
 - `PCAN_USBBUS1@1000000` is the recommended explicit PCAN channel format.
@@ -114,6 +121,12 @@ Run:
 
 ```bash
 ./target/release/motorbridge_ros2 -c motorbridge_manifest.yaml
+```
+
+Development run:
+
+```bash
+cargo run --release -- -c motorbridge_manifest.yaml
 ```
 
 Linux CAN notes:
@@ -141,6 +154,12 @@ Run:
 ./target/release/motorbridge_ros2 -c motorbridge_manifest.yaml
 ```
 
+Development run:
+
+```bash
+cargo run --release -- -c motorbridge_manifest.yaml
+```
+
 macOS note:
 
 - The binary can build natively.
@@ -159,7 +178,15 @@ abi/
   libmotor_abi.dylib     # macOS
 ```
 
-The build script copies ABI artifacts into `abi/` during local builds. ABI binaries are generated files and are ignored by git.
+The build script builds `motorbridge` package `motor_abi` and copies ABI artifacts into `abi/` during local builds. ABI binaries are generated files and are ignored by git.
+
+ABI lookup order:
+
+- `MOTORBRIDGE_ABI_PATH`
+- build-time default path, usually `abi/<platform-library>`
+- `abi/<platform-library>` next to the executable
+- `<platform-library>` next to the executable
+- `abi/<platform-library>` from the current working directory
 
 Override ABI path when needed:
 
@@ -188,6 +215,7 @@ joints:
     vendor: "damiao"
     transport: "socketcan"
     bus_interface: "PCAN_USBBUS1@1000000"
+    serial_baud: 921600          # only used by transport: "dm-serial"
     motor_id: 0x06
     feedback_id: 0x16
     model: "4340P"
@@ -198,6 +226,20 @@ Transport defaults:
 
 - `hexfellow` defaults to `socketcanfd`
 - all other vendors default to `socketcan`
+
+Model defaults when `model` is omitted:
+
+- `damiao`: `4340P`
+- `robstride`: `rs-00`
+- `myactuator`: `X8`
+- `hexfellow`: `hexfellow`
+- `hightorque`: `hightorque`
+
+Transport aliases accepted by the bridge:
+
+- `socketcan`, `can`, `auto`
+- `socketcanfd`, `canfd`
+- `dm-serial`, `dm_serial`, `dmserial`, `serial`
 
 Vendor examples:
 
@@ -273,6 +315,13 @@ Supported command operations:
 - `force_pos`
 
 MotorBridge ABI may report an error when an operation is not supported by a vendor.
+
+State output:
+
+- `pos`: rad
+- `vel`: rad/s
+- `torque`: Nm when provided by the vendor backend
+- `status_code`: vendor-normalized ABI status byte
 
 ## CI
 
