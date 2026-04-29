@@ -1,0 +1,9 @@
+target/
+
+# generated ABI artifacts copied by build.rs
+abi/*.dll
+abi/*.so
+abi/*.dylib
+
+# optional local logs
+*.log

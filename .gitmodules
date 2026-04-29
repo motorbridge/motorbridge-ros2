@@ -1,0 +1,9 @@
+﻿[submodule "third_party/motorbridge"]
+	path = third_party/motorbridge
+	url = https://github.com/tianrking/motorbridge.git
+[submodule "third_party/RustDDS"]
+	path = third_party/RustDDS
+	url = https://github.com/Atostek/RustDDS.git
+[submodule "third_party/zenoh"]
+	path = third_party/zenoh
+	url = https://github.com/eclipse-zenoh/zenoh.git

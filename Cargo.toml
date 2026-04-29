@@ -1,0 +1,16 @@
+﻿[package]
+name = "motorbridge_ros2"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_yaml = "0.9"
+serde_json = "1"
+rustdds = { path = "third_party/RustDDS" }
+motor_core = { path = "third_party/motorbridge/motor_core" }
+motor_vendor_damiao = { path = "third_party/motorbridge/motor_vendors/damiao" }
+mio_06 = { package = "mio", version = "0.6.23" }
+ctrlc = "3"
+
