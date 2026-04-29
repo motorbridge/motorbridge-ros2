@@ -1,5 +1,6 @@
 ﻿#![allow(deprecated)]
 
+mod abi;
 mod config;
 mod types;
 
@@ -7,10 +8,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use abi::{normalize_transport, normalize_vendor, AbiController, AbiMotor, MotorAbi};
 use anyhow::{anyhow, Context, Result};
 use config::{ControlProfile, Manifest};
 use mio_06::{Events, Poll, PollOpt, Ready, Token};
-use motor_vendor_damiao::{ControlMode, DamiaoController, DamiaoMotor};
 use rustdds::policy::{Durability, History, Liveliness, Reliability};
 use rustdds::ros2::{NodeOptions, RosParticipant};
 use rustdds::{no_key, CDRDeserializerAdapter, CDRSerializerAdapter, QosPolicyBuilder, TopicKind};
@@ -26,7 +27,7 @@ const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 struct JointRuntime {
     cfg: config::JointConfig,
     profile: ControlProfile,
-    motor: Option<Arc<DamiaoMotor>>,
+    motor: Option<AbiMotor>,
     reader: no_key::DataReader<MotorCommand, CDRDeserializerAdapter<MotorCommand>>,
     json_reader: no_key::DataReader<RosString, CDRDeserializerAdapter<RosString>>,
     writer: no_key::DataWriter<MotorState, CDRSerializerAdapter<MotorState>>,
@@ -53,8 +54,9 @@ fn main() -> Result<()> {
         manifest_path, manifest.target_name, manifest.version
     );
 
-    let mut controllers: HashMap<String, Arc<DamiaoController>> = HashMap::new();
-    println!("[boot] motorbridge core backend will connect lazily on first command.");
+    let abi = MotorAbi::load_default().context("load motorbridge ABI failed")?;
+    let mut controllers: HashMap<String, AbiController> = HashMap::new();
+    println!("[boot] motorbridge ABI backend loaded; controllers connect lazily on first command.");
 
     let qos = if manifest.ros_bridge_options.qos_profile.eq_ignore_ascii_case("reliable") {
         QosPolicyBuilder::new()
@@ -108,9 +110,10 @@ fn main() -> Result<()> {
         let state_json_topic_name = format!("{}/state_json", joint.joint_name);
         let event_json_topic_name = format!("{}/event_json", joint.joint_name);
         println!(
-            "[boot] joint={} vendor={} bus={} motor_id=0x{:X} feedback_id=0x{:X} model={} subscribe=/{}, /{} publish=/{}, /{}, /{}",
+            "[boot] joint={} vendor={} transport={} bus={} motor_id=0x{:X} feedback_id=0x{:X} model={} subscribe=/{}, /{} publish=/{}, /{}, /{}",
             joint.joint_name,
             joint.vendor.as_deref().unwrap_or("damiao"),
+            joint.transport.as_deref().unwrap_or("auto"),
             joint.bus_interface,
             joint.motor_id,
             joint.feedback_id.unwrap_or(joint.motor_id),
@@ -190,7 +193,7 @@ fn main() -> Result<()> {
                     if sample.value().engaged {
                         for rt in &mut runtimes {
                             if let Some(motor) = &rt.motor {
-                                let _ = motor.disable();
+                                let _ = abi.motor_disable(motor);
                             }
                             rt.enabled = false;
                             rt.active_cmd = None;
@@ -207,7 +210,7 @@ fn main() -> Result<()> {
                         "[cmd] joint={} via=typed op={} payload={:?}",
                         rt.cfg.joint_name, cmd.op, cmd
                     );
-                    if let Err(err) = apply_command(&mut controllers, rt, &cmd) {
+                    if let Err(err) = apply_command(&abi, &mut controllers, rt, &cmd) {
                         eprintln!(
                             "[cmd] joint={} via=typed apply_error={}",
                             rt.cfg.joint_name, err
@@ -226,20 +229,20 @@ fn main() -> Result<()> {
             }
             if token.0 >= TOKEN_BASE_JSON && token.0 < TOKEN_BASE_JSON + runtimes.len() {
                 let rt = &mut runtimes[token.0 - TOKEN_BASE_JSON];
-                drain_json_commands(&mut controllers, rt);
+                drain_json_commands(&abi, &mut controllers, rt);
             }
         }
 
         for rt in &mut runtimes {
-            drain_json_commands(&mut controllers, rt);
+            drain_json_commands(&abi, &mut controllers, rt);
 
             if let Some(cmd) = rt.active_cmd.clone() {
-                let _ = apply_command(&mut controllers, rt, &cmd);
+                let _ = apply_command(&abi, &mut controllers, rt, &cmd);
             }
 
             if rt.last_cmd_at.elapsed() > hb_timeout && rt.enabled && manifest.global_safety.watchdog_strategy != "hold" {
                 if let Some(motor) = &rt.motor {
-                    let _ = motor.disable();
+                    let _ = abi.motor_disable(motor);
                 }
                 rt.enabled = false;
             }
@@ -247,7 +250,7 @@ fn main() -> Result<()> {
             let Some(motor) = &rt.motor else {
                 continue;
             };
-            if let Err(err) = motor.request_motor_feedback() {
+            if let Err(err) = abi.motor_request_feedback(motor) {
                 if rt.last_bus_error_log_at.elapsed() >= Duration::from_secs(1) {
                     eprintln!(
                         "[bus] joint={} request_feedback_error={}",
@@ -256,7 +259,7 @@ fn main() -> Result<()> {
                     rt.last_bus_error_log_at = Instant::now();
                 }
             }
-            if let Some(st) = motor.latest_state() {
+            if let Some(st) = abi.motor_get_state(motor)? {
                 let d = f32::from(rt.cfg.direction.unwrap_or(1));
                 let pos = st.pos * d + rt.cfg.pos_offset.unwrap_or(0.0);
                 if rt.last_state_log_at.elapsed() >= Duration::from_secs(1) {
@@ -301,14 +304,21 @@ fn main() -> Result<()> {
         }
 
         for ctrl in controllers.values() {
-            if let Err(err) = ctrl.poll_feedback_once() {
+            if let Err(err) = abi.controller_poll_feedback_once(ctrl) {
                 eprintln!("[bus] poll_feedback_error={err}");
             }
         }
     }
 
-    for ctrl in controllers.values() {
-        let _ = ctrl.shutdown();
+    for rt in &mut runtimes {
+        if let Some(motor) = rt.motor.take() {
+            abi.free_motor(motor);
+        }
+    }
+
+    for ctrl in controllers.into_values() {
+        let _ = abi.controller_shutdown(&ctrl);
+        abi.free_controller(ctrl);
     }
 
     ros_node.clear_node();
@@ -317,7 +327,8 @@ fn main() -> Result<()> {
 }
 
 fn drain_json_commands(
-    controllers: &mut HashMap<String, Arc<DamiaoController>>,
+    abi: &MotorAbi,
+    controllers: &mut HashMap<String, AbiController>,
     rt: &mut JointRuntime,
 ) {
     while let Ok(Some(sample)) = rt.json_reader.take_next_sample() {
@@ -328,7 +339,7 @@ fn drain_json_commands(
         );
         match serde_json::from_str::<MotorCommand>(&raw) {
             Ok(cmd) => {
-                if let Err(err) = apply_command(controllers, rt, &cmd) {
+                if let Err(err) = apply_command(abi, controllers, rt, &cmd) {
                     eprintln!(
                         "[cmd] joint={} via=json apply_error={}",
                         rt.cfg.joint_name, err
@@ -355,30 +366,40 @@ fn drain_json_commands(
 }
 
 fn apply_command(
-    controllers: &mut HashMap<String, Arc<DamiaoController>>,
+    abi: &MotorAbi,
+    controllers: &mut HashMap<String, AbiController>,
     rt: &mut JointRuntime,
     cmd: &MotorCommand,
 ) -> Result<()> {
-    ensure_motor(controllers, rt)?;
+    ensure_motor(abi, controllers, rt)?;
     let motor = rt.motor.as_ref().expect("ensure_motor sets motor");
     match cmd.op.as_str() {
-        "enable" => { motor.enable()?; rt.enabled = true; }
-        "disable" => { motor.disable()?; rt.enabled = false; rt.active_cmd = None; }
+        "enable" => { abi.motor_enable(motor)?; rt.enabled = true; }
+        "disable" => { abi.motor_disable(motor)?; rt.enabled = false; rt.active_cmd = None; }
+        "clear_error" | "clear-error" => {
+            abi.motor_clear_error(motor)?;
+        }
+        "set_zero" | "set-zero" | "set_zero_position" | "set-zero-position" => {
+            abi.motor_set_zero_position(motor)?;
+        }
+        "store_parameters" | "store-parameters" | "save_parameters" | "save-parameters" => {
+            abi.motor_store_parameters(motor)?;
+        }
         "mit" => {
-            motor.ensure_control_mode(ControlMode::Mit, Duration::from_millis(200))?;
-            motor.send_cmd_mit(mapped_pos(rt, cmd.pos.unwrap_or(0.0))?, mapped_axis(rt, cmd.vel.unwrap_or(0.0)), cmd.kp.unwrap_or(rt.profile.kp.unwrap_or(0.05)), cmd.kd.unwrap_or(rt.profile.kd.unwrap_or(0.005)), mapped_axis(rt, cmd.tau.unwrap_or(0.0)))?;
+            abi.motor_ensure_mode(motor, 1, 200)?;
+            abi.motor_send_mit(motor, mapped_pos(rt, cmd.pos.unwrap_or(0.0))?, mapped_axis(rt, cmd.vel.unwrap_or(0.0)), cmd.kp.unwrap_or(rt.profile.kp.unwrap_or(0.05)), cmd.kd.unwrap_or(rt.profile.kd.unwrap_or(0.005)), mapped_axis(rt, cmd.tau.unwrap_or(0.0)))?;
         }
         "pos_vel" | "pos-vel" => {
-            motor.ensure_control_mode(ControlMode::PosVel, Duration::from_millis(200))?;
-            motor.send_cmd_pos_vel(mapped_pos(rt, cmd.pos.unwrap_or(0.0))?, cmd.vlim.unwrap_or(rt.profile.max_velocity.unwrap_or(3.0)))?;
+            abi.motor_ensure_mode(motor, 2, 200)?;
+            abi.motor_send_pos_vel(motor, mapped_pos(rt, cmd.pos.unwrap_or(0.0))?, cmd.vlim.unwrap_or(rt.profile.max_velocity.unwrap_or(3.0)))?;
         }
         "vel" => {
-            motor.ensure_control_mode(ControlMode::Vel, Duration::from_millis(200))?;
-            motor.send_cmd_vel(mapped_axis(rt, cmd.vel.unwrap_or(0.0)))?;
+            abi.motor_ensure_mode(motor, 3, 200)?;
+            abi.motor_send_vel(motor, mapped_axis(rt, cmd.vel.unwrap_or(0.0)))?;
         }
         "force_pos" | "force-pos" => {
-            motor.ensure_control_mode(ControlMode::ForcePos, Duration::from_millis(200))?;
-            motor.send_cmd_force_pos(mapped_pos(rt, cmd.pos.unwrap_or(0.0))?, cmd.vlim.unwrap_or(rt.profile.max_velocity.unwrap_or(3.0)), cmd.ratio.unwrap_or(0.3))?;
+            abi.motor_ensure_mode(motor, 4, 200)?;
+            abi.motor_send_force_pos(motor, mapped_pos(rt, cmd.pos.unwrap_or(0.0))?, cmd.vlim.unwrap_or(rt.profile.max_velocity.unwrap_or(3.0)), cmd.ratio.unwrap_or(0.3))?;
         }
         other => return Err(anyhow!("unsupported op: {other}")),
     }
@@ -386,34 +407,41 @@ fn apply_command(
 }
 
 fn ensure_motor(
-    controllers: &mut HashMap<String, Arc<DamiaoController>>,
+    abi: &MotorAbi,
+    controllers: &mut HashMap<String, AbiController>,
     rt: &mut JointRuntime,
 ) -> Result<()> {
     if rt.motor.is_some() {
         return Ok(());
     }
-    let vendor = rt.cfg.vendor.as_deref().unwrap_or("damiao");
-    if !vendor.eq_ignore_ascii_case("damiao") {
-        return Err(anyhow!("unsupported vendor '{vendor}', only damiao is wired today"));
+    let vendor = normalize_vendor(rt.cfg.vendor.as_deref().unwrap_or("damiao"));
+    let transport = effective_transport(rt);
+    let controller_key = format!("{}:{}:{}", vendor, transport, rt.cfg.bus_interface);
+    if !controllers.contains_key(&controller_key) {
+        println!(
+            "[motorbridge_ros2] opening motorbridge ABI controller vendor={} transport={} endpoint='{}'",
+            vendor, transport, rt.cfg.bus_interface
+        );
+        let controller = abi.new_controller(&transport, &rt.cfg.bus_interface, rt.cfg.serial_baud)?;
+        controllers.insert(controller_key.clone(), controller);
     }
-    let controller = if let Some(controller) = controllers.get(&rt.cfg.bus_interface) {
-        Arc::clone(controller)
-    } else {
-        println!("[motorbridge_ros2] opening motorbridge core bus '{}'", rt.cfg.bus_interface);
-        let controller = Arc::new(DamiaoController::new_socketcan(&rt.cfg.bus_interface)?);
-        controllers.insert(rt.cfg.bus_interface.clone(), Arc::clone(&controller));
-        controller
-    };
-    let model = rt.cfg.model.clone().unwrap_or_else(|| "4340P".to_string());
+    let controller = controllers
+        .get(&controller_key)
+        .expect("controller inserted above");
+    let model = effective_model(rt, &vendor);
     println!(
-        "[motorbridge_ros2] add damiao motor joint={} bus={} motor_id=0x{:X} feedback_id=0x{:X} model={}",
+        "[motorbridge_ros2] add motorbridge motor joint={} vendor={} transport={} bus={} motor_id=0x{:X} feedback_id=0x{:X} model={}",
         rt.cfg.joint_name,
+        vendor,
+        transport,
         rt.cfg.bus_interface,
         rt.cfg.motor_id,
         rt.cfg.feedback_id.unwrap_or(rt.cfg.motor_id),
         model
     );
-    rt.motor = Some(controller.add_motor(
+    rt.motor = Some(abi.add_motor(
+        controller,
+        &vendor,
         rt.cfg.motor_id,
         rt.cfg.feedback_id.unwrap_or(rt.cfg.motor_id),
         &model,
@@ -422,6 +450,30 @@ fn ensure_motor(
 }
 
 fn mapped_axis(rt: &JointRuntime, v: f32) -> f32 { v * f32::from(rt.cfg.direction.unwrap_or(1)) }
+
+fn effective_transport(rt: &JointRuntime) -> String {
+    if let Some(transport) = &rt.cfg.transport {
+        return normalize_transport(transport);
+    }
+    match normalize_vendor(rt.cfg.vendor.as_deref().unwrap_or("damiao")).as_str() {
+        "hexfellow" => "socketcanfd".to_string(),
+        _ => "socketcan".to_string(),
+    }
+}
+
+fn effective_model(rt: &JointRuntime, vendor: &str) -> String {
+    if let Some(model) = &rt.cfg.model {
+        return model.clone();
+    }
+    match vendor {
+        "robstride" => "rs-00".to_string(),
+        "myactuator" => "X8".to_string(),
+        "hightorque" => "hightorque".to_string(),
+        "hexfellow" => "hexfellow".to_string(),
+        _ => "4340P".to_string(),
+    }
+}
+
 fn mapped_pos(rt: &JointRuntime, pos: f32) -> Result<f32> {
     if let Some([min_p, max_p]) = rt.cfg.pos_limit {
         if pos < min_p || pos > max_p { return Err(anyhow!("position out of range [{min_p}, {max_p}]")); }
@@ -459,6 +511,23 @@ fn parse_cli_args() -> Result<Option<String>> {
                 println!("{APP_NAME} {APP_VERSION}");
                 return Ok(None);
             }
+            "-c" | "--config" => {
+                let next = args.get(i + 1).ok_or_else(|| {
+                    anyhow!("missing value for {a}; expected a manifest yaml path")
+                })?;
+                if next.starts_with('-') {
+                    return Err(anyhow!(
+                        "invalid value for {a}: {next}\nexpected a manifest yaml path"
+                    ));
+                }
+                if manifest_path.is_some() {
+                    return Err(anyhow!(
+                        "manifest path already set; pass only one of positional path or -c/--config"
+                    ));
+                }
+                manifest_path = Some(next.clone());
+                i += 1;
+            }
             _ if a.starts_with('-') => {
                 return Err(anyhow!(
                     "unknown option: {a}\nuse --help to see supported options"
@@ -486,15 +555,18 @@ fn print_help() {
         "{APP_NAME} {APP_VERSION}\n\
          \n\
          Usage:\n\
+           {APP_NAME} [-c manifest.yaml]\n\
            {APP_NAME} [manifest.yaml]\n\
            {APP_NAME} -h | --help\n\
            {APP_NAME} -V | --version\n\
          \n\
          Arguments:\n\
-           manifest.yaml    optional manifest path (default: motorbridge_manifest.yaml)\n\
+           -c, --config     optional manifest path (default: motorbridge_manifest.yaml)\n\
+           manifest.yaml    positional manifest path (backward-compatible)\n\
          \n\
          Examples:\n\
            {APP_NAME}\n\
+           {APP_NAME} -c motorbridge_manifest.yaml\n\
            {APP_NAME} motorbridge_manifest.yaml"
     );
 }

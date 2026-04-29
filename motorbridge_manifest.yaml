@@ -28,6 +28,7 @@ control_profiles:
 joints:
   - joint_name: "base_yaw"
     vendor: "damiao"
+    transport: "socketcan"
     bus_interface: "PCAN_USBBUS1@1000000" # Windows/PCAN 显式通道；等价于 can0@1000000
     motor_id: 0x06               # 物理电机 ID (十六进制写法)
     feedback_id: 0x16            # 反馈 ID (十六进制写法)
@@ -40,6 +41,7 @@ joints:
 
   - joint_name: "gripper"
     vendor: "damiao"
+    transport: "socketcan"
     bus_interface: "PCAN_USBBUS1@1000000"
     motor_id: 0x15
     feedback_id: 0x25

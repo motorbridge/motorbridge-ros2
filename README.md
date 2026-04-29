@@ -1,16 +1,35 @@
-# motorbridge-ros2
+# MotorBridge-ROS2
 
-`motorbridge-ros2` is a ROS2/DDS bridge built on:
+MotorBridge-ROS2 is a native ROS2/DDS bridge for MotorBridge.
 
-- `motorbridge` core (`motor_core` + `motor_vendor_damiao`)
-- `RustDDS` (ROS2-compatible DDS transport)
-- `zenoh` (pinned in workspace for dependency alignment)
+The bridge does not require a local ROS2 installation. It uses RustDDS to expose ROS2-compatible topics, and delegates all motor behavior to the MotorBridge ABI.
 
-## 1) Dependency modes
+## Features
 
-This repository supports two reproducible modes.
+- Native Windows / Linux / macOS build
+- ROS2 topic discovery over DDS
+- Runtime manifest configuration
+- Unified JSON command topics
+- MotorBridge ABI backend
+- Vendor-neutral motor support
 
-### Mode A: git submodule (recommended)
+Supported vendors:
+
+- `damiao`
+- `robstride`
+- `myactuator`
+- `hexfellow`
+- `hightorque`
+
+Supported transports:
+
+- `socketcan`
+- `socketcanfd`
+- `dm-serial`
+
+## Clone
+
+Recommended submodule mode:
 
 ```bash
 git clone <repo-url> motorbridge-ros2
@@ -18,9 +37,7 @@ cd motorbridge-ros2
 git submodule update --init --recursive
 ```
 
-### Mode B: custom local source paths
-
-Use your own local clones of `motorbridge` / `RustDDS` / `zenoh`:
+Custom local source mode:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\bootstrap.ps1 `
@@ -29,219 +46,249 @@ powershell -ExecutionPolicy Bypass -File .\scripts\bootstrap.ps1 `
   -ZenohDir C:\src\zenoh
 ```
 
-## 2) Platform build and run
+## Unified Run Command
 
-### Release binary usage (all platforms)
+Use the same command style on every platform:
 
-After `cargo build --release`, run the binary directly:
+```bash
+motorbridge_ros2 -c motorbridge_manifest.yaml
+```
 
-- Windows: `target\release\motorbridge_ros2.exe`
-- Linux/macOS: `./target/release/motorbridge_ros2`
+CLI options:
 
-Supported CLI:
+```text
+motorbridge_ros2 -c <manifest.yaml>
+motorbridge_ros2 --help
+motorbridge_ros2 --version
+```
 
-- `-h`, `--help`: print usage
-- `-V`, `--version`: print binary version
-- `[manifest.yaml]`: optional manifest path (default: `motorbridge_manifest.yaml`)
+The positional form is still supported for compatibility:
 
-### Windows
+```bash
+motorbridge_ros2 motorbridge_manifest.yaml
+```
 
-#### Prerequisites
+## Windows
 
-- Rust toolchain (MSVC target)
-- Visual Studio C++ build tools (`link.exe`)
-- Npcap SDK (`Packet.lib`) for transitive dependency link
-- PEAK PCAN driver/runtime when using real CAN hardware
+Prerequisites:
 
-#### Build
+- Rust MSVC toolchain
+- Visual Studio C++ build tools
+- Npcap SDK, providing `Packet.lib`
+- PEAK PCAN driver/runtime for real PCAN hardware
+
+Check prerequisites and build:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\check_windows_prereq.ps1
 cargo build --release
 ```
 
-#### Run
+Run from the repository root:
 
 ```powershell
-cargo run --release -- motorbridge_manifest.yaml
+.\target\release\motorbridge_ros2.exe -c motorbridge_manifest.yaml
 ```
 
-or direct binary:
+Windows CAN notes:
 
-```powershell
-.\target\release\motorbridge_ros2.exe motorbridge_manifest.yaml
-.\target\release\motorbridge_ros2.exe --help
-.\target\release\motorbridge_ros2.exe --version
-```
+- `PCAN_USBBUS1@1000000` is the recommended explicit PCAN channel format.
+- `can0` also maps to `PCAN_USBBUS1` inside MotorBridge core.
+- `can1` maps to `PCAN_USBBUS2`.
 
-Notes:
+## Ubuntu / Linux
 
-- In this project, Windows CAN is normally configured as `PCAN_USBBUS1@1000000`.
-- `can0` is also accepted by motorbridge core and maps to `PCAN_USBBUS1`.
-- If rebuild fails with `Access is denied` for `motorbridge_ros2.exe`, stop old process first.
-
-### Ubuntu (Linux)
-
-#### Prerequisites
+Prerequisites:
 
 - Rust toolchain
-- CAN interface ready (for example SocketCAN `can0`)
-- For ROS2 CLI testing: ROS2 environment sourced on test machine
+- SocketCAN or CAN-FD interface configured
+- ROS2 is optional locally; it is only needed on machines that use `ros2 topic` CLI tools
 
-#### Build
+Build:
 
 ```bash
 cargo build --release
 ```
 
-#### Run
+Run:
 
 ```bash
-cargo run --release -- motorbridge_manifest.yaml
+./target/release/motorbridge_ros2 -c motorbridge_manifest.yaml
 ```
 
-or direct binary:
+Linux CAN notes:
 
-```bash
-./target/release/motorbridge_ros2 motorbridge_manifest.yaml
-./target/release/motorbridge_ros2 --help
-./target/release/motorbridge_ros2 --version
-```
+- Use real interface names such as `can0`, `can1`, or `slcan0`.
+- Configure bitrate using Linux networking tools before starting the bridge.
+- For CAN-FD devices, set `transport: "socketcanfd"` in the manifest.
 
-Notes:
+## macOS
 
-- On Linux, `bus_interface` should use real interface names like `can0` / `can1`.
-- Bring interface up before run (for example with `ip link`).
-
-### macOS
-
-#### Prerequisites
+Prerequisites:
 
 - Rust toolchain
 - Xcode command line tools
 
-#### Build
+Build:
 
 ```bash
 cargo build --release
 ```
 
-#### Run
+Run:
 
 ```bash
-cargo run --release -- motorbridge_manifest.yaml
+./target/release/motorbridge_ros2 -c motorbridge_manifest.yaml
 ```
 
-or direct binary:
+macOS note:
+
+- The binary can build natively.
+- Real motor control depends on the MotorBridge hardware backend available for your adapter.
+
+## Release Package Layout
+
+A binary release should include:
+
+```text
+motorbridge_ros2[.exe]
+motorbridge_manifest.yaml
+abi/
+  motor_abi.dll          # Windows
+  libmotor_abi.so        # Linux
+  libmotor_abi.dylib     # macOS
+```
+
+The build script copies ABI artifacts into `abi/` during local builds. ABI binaries are generated files and are ignored by git.
+
+Override ABI path when needed:
 
 ```bash
-./target/release/motorbridge_ros2 motorbridge_manifest.yaml
-./target/release/motorbridge_ros2 --help
-./target/release/motorbridge_ros2 --version
+MOTORBRIDGE_ABI_PATH=/path/to/libmotor_abi.so ./motorbridge_ros2 -c motorbridge_manifest.yaml
 ```
 
-Notes:
-
-- Binary can build on macOS.
-- Real motor CAN control depends on available backend/hardware compatibility in your setup.
-
-## 3) Generated ABI artifacts
-
-`build.rs` also builds `motorbridge` package `motor_abi` and copies ABI artifacts into `abi/`:
-
-- Windows: `abi/motor_abi.dll`
-- Linux: `abi/libmotor_abi.so`
-- macOS: `abi/libmotor_abi.dylib`
-
-These are generated files and are ignored by git.
-
-Optional runtime override:
-
-```bash
-MOTORBRIDGE_ABI_PATH=/path/to/libmotor_abi.so cargo run --release -- motorbridge_manifest.yaml
-```
-
-Windows PowerShell:
+PowerShell:
 
 ```powershell
 $env:MOTORBRIDGE_ABI_PATH = "C:\path\to\motor_abi.dll"
-cargo run --release -- motorbridge_manifest.yaml
+.\motorbridge_ros2.exe -c motorbridge_manifest.yaml
 ```
 
-See also: `abi/README.md`.
+## Manifest
 
-## 4) Manifest and motor mapping
-
-Default manifest:
+Default config:
 
 - `motorbridge_manifest.yaml`
 
-Current default `base_yaw` config:
+Each joint chooses a vendor and transport:
 
-- vendor: `damiao`
-- bus: `PCAN_USBBUS1@1000000`
-- motor id: `0x06`
-- feedback id: `0x16`
-- model: `4340P`
+```yaml
+joints:
+  - joint_name: "base_yaw"
+    vendor: "damiao"
+    transport: "socketcan"
+    bus_interface: "PCAN_USBBUS1@1000000"
+    motor_id: 0x06
+    feedback_id: 0x16
+    model: "4340P"
+    default_profile: "high_stiffness"
+```
 
-Important:
+Transport defaults:
 
-- `enable` / `disable` only change state.
-- Visible motion requires movement commands (for example `pos_vel` or `mit`).
+- `hexfellow` defaults to `socketcanfd`
+- all other vendors default to `socketcan`
 
-## 5) ROS2 topics
+Vendor examples:
+
+```yaml
+- joint_name: "robstride_joint"
+  vendor: "robstride"
+  transport: "socketcan"
+  bus_interface: "can0"
+  motor_id: 0x14
+  feedback_id: 0xFD
+  model: "rs-00"
+  default_profile: "high_stiffness"
+
+- joint_name: "myactuator_joint"
+  vendor: "myactuator"
+  transport: "socketcan"
+  bus_interface: "can0"
+  motor_id: 0x01
+  feedback_id: 0x241
+  model: "X8"
+  default_profile: "high_stiffness"
+
+- joint_name: "hexfellow_joint"
+  vendor: "hexfellow"
+  transport: "socketcanfd"
+  bus_interface: "can0"
+  motor_id: 0x01
+  feedback_id: 0x01
+  model: "hexfellow"
+  default_profile: "high_stiffness"
+
+- joint_name: "hightorque_joint"
+  vendor: "hightorque"
+  transport: "socketcan"
+  bus_interface: "can0"
+  motor_id: 0x01
+  feedback_id: 0x01
+  model: "hightorque"
+  default_profile: "high_stiffness"
+```
+
+## ROS2 Topics
 
 Per joint:
 
-- `/<joint>/cmd_json` (subscribe, `std_msgs/msg/String`)
-- `/<joint>/state_json` (publish, `std_msgs/msg/String`)
-- `/<joint>/cmd` and `/<joint>/state` (typed CDR topics)
+- `/<joint>/cmd_json`: subscribe, `std_msgs/msg/String`
+- `/<joint>/state_json`: publish, `std_msgs/msg/String`
+- `/<joint>/cmd`: typed CDR command topic
+- `/<joint>/state`: typed CDR state topic
 
-Diagnostic:
+Diagnostic topic:
 
-- `/easter_counter` (published every second)
+- `/easter_counter`
 
-## 6) Quick ROS2 command test
-
-Enable:
+Command examples:
 
 ```bash
 ros2 topic pub --once /base_yaw/cmd_json std_msgs/msg/String "{data: '{\"op\":\"enable\"}'}"
-```
-
-Move to 0.5 rad:
-
-```bash
 ros2 topic pub --once /base_yaw/cmd_json std_msgs/msg/String "{data: '{\"op\":\"pos_vel\",\"pos\":0.5,\"vlim\":0.5}'}"
-```
-
-Disable:
-
-```bash
 ros2 topic pub --once /base_yaw/cmd_json std_msgs/msg/String "{data: '{\"op\":\"disable\"}'}"
 ```
 
-## 7) Version pinning
+Supported command operations:
 
-Pinned dependency commits are documented in:
+- `enable`
+- `disable`
+- `clear_error`
+- `set_zero`
+- `store_parameters`
+- `mit`
+- `pos_vel`
+- `vel`
+- `force_pos`
 
-- `DEPENDENCIES.lock.md`
+MotorBridge ABI may report an error when an operation is not supported by a vendor.
 
-When updating submodule revisions, update `DEPENDENCIES.lock.md` in the same commit.
+## CI
 
-## 8) CI
-
-GitHub Actions CI is included at:
+GitHub Actions CI is defined in:
 
 - `.github/workflows/ci.yml`
 
-Current CI runs `cargo check` on:
+The default CI runs `cargo check` on:
 
 - `ubuntu-latest`
 - `macos-latest`
 
-Windows CI note:
+Windows CI needs a runner with Npcap SDK installed because the dependency chain links `Packet.lib`.
 
-- This project transitively links `Packet.lib` on Windows.
-- Hosted runners usually do not provide Npcap SDK by default.
-- For Windows CI, use a self-hosted runner with Npcap SDK installed (or run `scripts/check_windows_prereq.ps1` in your internal pipeline before build).
+## Dependency Pins
+
+Pinned submodule commits are documented in:
+
+- `DEPENDENCIES.lock.md`

@@ -29,7 +29,9 @@ pub struct ControlProfile {
 pub struct JointConfig {
     pub joint_name: String,
     pub vendor: Option<String>,
+    pub transport: Option<String>,
     pub bus_interface: String,
+    pub serial_baud: Option<u32>,
     pub motor_id: u16,
     pub feedback_id: Option<u16>,
     pub interface_type: Option<String>,
