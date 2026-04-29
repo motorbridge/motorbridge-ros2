@@ -102,6 +102,36 @@ Windows CAN notes:
 - `PCAN_USBBUS1@1000000` is the recommended explicit PCAN channel format.
 - `can0` also maps to `PCAN_USBBUS1` inside MotorBridge core.
 - `can1` maps to `PCAN_USBBUS2`.
+- Use `PCAN_USBBUS2@1000000` when the adapter is the second PEAK USB channel.
+
+Windows manifest channel example:
+
+```yaml
+joints:
+  - joint_name: "base_yaw"
+    vendor: "damiao"
+    transport: "socketcan"
+    bus_interface: "PCAN_USBBUS1@1000000"
+    motor_id: 0x06
+    feedback_id: 0x16
+    model: "4340P"
+    default_profile: "high_stiffness"
+```
+
+Windows Damiao serial bridge example:
+
+```yaml
+joints:
+  - joint_name: "base_yaw"
+    vendor: "damiao"
+    transport: "dm-serial"
+    bus_interface: "COM3"
+    serial_baud: 921600
+    motor_id: 0x06
+    feedback_id: 0x16
+    model: "4340P"
+    default_profile: "high_stiffness"
+```
 
 ## Ubuntu / Linux
 
@@ -134,6 +164,58 @@ Linux CAN notes:
 - Use real interface names such as `can0`, `can1`, or `slcan0`.
 - Configure bitrate using Linux networking tools before starting the bridge.
 - For CAN-FD devices, set `transport: "socketcanfd"` in the manifest.
+- Do not put bitrate into `bus_interface` on Linux; configure bitrate with `ip link` first.
+
+Linux SocketCAN setup example:
+
+```bash
+sudo ip link set can0 down || true
+sudo ip link set can0 type can bitrate 1000000
+sudo ip link set can0 up
+```
+
+Linux manifest channel example:
+
+```yaml
+joints:
+  - joint_name: "base_yaw"
+    vendor: "damiao"
+    transport: "socketcan"
+    bus_interface: "can0"
+    motor_id: 0x06
+    feedback_id: 0x16
+    model: "4340P"
+    default_profile: "high_stiffness"
+```
+
+Linux CAN-FD manifest example:
+
+```yaml
+joints:
+  - joint_name: "ankle"
+    vendor: "hexfellow"
+    transport: "socketcanfd"
+    bus_interface: "can0"
+    motor_id: 0x01
+    feedback_id: 0x01
+    model: "hexfellow"
+    default_profile: "high_stiffness"
+```
+
+Linux Damiao serial bridge example:
+
+```yaml
+joints:
+  - joint_name: "base_yaw"
+    vendor: "damiao"
+    transport: "dm-serial"
+    bus_interface: "/dev/ttyACM0"
+    serial_baud: 921600
+    motor_id: 0x06
+    feedback_id: 0x16
+    model: "4340P"
+    default_profile: "high_stiffness"
+```
 
 ## macOS
 
@@ -164,6 +246,34 @@ macOS note:
 
 - The binary can build natively.
 - Real motor control depends on the MotorBridge hardware backend available for your adapter.
+- Use the same manifest fields as other platforms, but set `bus_interface` to the backend endpoint expected by your MotorBridge adapter.
+
+macOS manifest examples:
+
+```yaml
+joints:
+  - joint_name: "base_yaw"
+    vendor: "damiao"
+    transport: "socketcan"
+    bus_interface: "can0"
+    motor_id: 0x06
+    feedback_id: 0x16
+    model: "4340P"
+    default_profile: "high_stiffness"
+```
+
+```yaml
+joints:
+  - joint_name: "base_yaw"
+    vendor: "damiao"
+    transport: "dm-serial"
+    bus_interface: "/dev/tty.usbmodem1101"
+    serial_baud: 921600
+    motor_id: 0x06
+    feedback_id: 0x16
+    model: "4340P"
+    default_profile: "high_stiffness"
+```
 
 ## Release Package Layout
 
@@ -207,7 +317,7 @@ Default config:
 
 - `motorbridge_manifest.yaml`
 
-Each joint chooses a vendor and transport:
+Each joint chooses a vendor, transport, and platform-specific bus endpoint:
 
 ```yaml
 joints:
@@ -221,6 +331,14 @@ joints:
     model: "4340P"
     default_profile: "high_stiffness"
 ```
+
+`bus_interface` meaning by platform:
+
+- Windows PCAN: `PCAN_USBBUS1@1000000`, `PCAN_USBBUS2@1000000`; `can0` and `can1` are accepted aliases.
+- Windows serial bridge: `COM3`, `COM4`, etc. with `transport: "dm-serial"`.
+- Linux SocketCAN: `can0`, `can1`, `slcan0`; bitrate is configured outside the manifest.
+- Linux serial bridge: `/dev/ttyACM0`, `/dev/ttyUSB0`, etc. with `transport: "dm-serial"`.
+- macOS: adapter-specific endpoint, for example `can0` if your backend exposes it, or `/dev/tty.usbmodemXXXX` for serial bridge.
 
 Transport defaults:
 
