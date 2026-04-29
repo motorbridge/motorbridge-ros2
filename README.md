@@ -59,6 +59,8 @@ CLI options:
 ```text
 motorbridge_ros2 -c <manifest.yaml>
 motorbridge_ros2 --config <manifest.yaml>
+motorbridge_ros2 --check-config -c <manifest.yaml>
+motorbridge_ros2 --list-topics -c <manifest.yaml>
 motorbridge_ros2 --help
 motorbridge_ros2 --version
 ```
@@ -67,6 +69,13 @@ The positional form is still supported for compatibility:
 
 ```bash
 motorbridge_ros2 motorbridge_manifest.yaml
+```
+
+Configuration-only checks do not open DDS or motor hardware:
+
+```bash
+motorbridge_ros2 --check-config -c motorbridge_manifest.yaml
+motorbridge_ros2 --list-topics -c motorbridge_manifest.yaml
 ```
 
 ## Windows
@@ -116,6 +125,20 @@ joints:
     feedback_id: 0x16
     model: "4340P"
     default_profile: "high_stiffness"
+
+global_safety:
+  heartbeat_timeout_ms: 100
+  emergency_stop_topic: "/sys/estop"
+  emergency_stop_json_topic: "/sys/estop_json"
+  watchdog_strategy: "hold"
+
+ros_bridge_options:
+  namespace: "motorbridge"
+  qos_profile: "reliable"
+  status_topic: "bridge_status_json"
+  enable_easter_counter: true
+  state_publish_period_ms: 20
+  feedback_warn_ms: 2000
 ```
 
 Windows Damiao serial bridge example:
@@ -405,19 +428,26 @@ Per joint:
 
 - `/<joint>/cmd_json`: subscribe, `std_msgs/msg/String`
 - `/<joint>/state_json`: publish, `std_msgs/msg/String`
+- `/<joint>/event_json`: publish, `std_msgs/msg/String`
 - `/<joint>/cmd`: typed CDR command topic
 - `/<joint>/state`: typed CDR state topic
 
-Diagnostic topic:
+Global diagnostic and safety topics:
 
 - `/easter_counter`
+- `/bridge_status_json`
+- `/sys/estop_json`: subscribe, `std_msgs/msg/String`
+- `/sys/estop`: typed internal emergency stop topic
+
+If `ros_bridge_options.namespace` is set, relative topics are exposed under that namespace. For example with `namespace: "motorbridge"`, use `/motorbridge/base_yaw/cmd_json`. Absolute topics such as `/sys/estop_json` stay absolute.
 
 Command examples:
 
 ```bash
-ros2 topic pub --once /base_yaw/cmd_json std_msgs/msg/String "{data: '{\"op\":\"enable\"}'}"
-ros2 topic pub --once /base_yaw/cmd_json std_msgs/msg/String "{data: '{\"op\":\"pos_vel\",\"pos\":0.5,\"vlim\":0.5}'}"
-ros2 topic pub --once /base_yaw/cmd_json std_msgs/msg/String "{data: '{\"op\":\"disable\"}'}"
+ros2 topic pub --once /motorbridge/base_yaw/cmd_json std_msgs/msg/String "{data: '{\"op\":\"enable\",\"request_id\":\"test-001\"}'}"
+ros2 topic pub --once /motorbridge/base_yaw/cmd_json std_msgs/msg/String "{data: '{\"op\":\"pos_vel\",\"pos\":0.5,\"vlim\":0.5,\"request_id\":\"test-002\"}'}"
+ros2 topic pub --once /motorbridge/base_yaw/cmd_json std_msgs/msg/String "{data: '{\"op\":\"disable\",\"request_id\":\"test-003\"}'}"
+ros2 topic pub --once /sys/estop_json std_msgs/msg/String "{data: '{\"engaged\":true}'}"
 ```
 
 Supported command operations:
@@ -440,6 +470,25 @@ State output:
 - `vel`: rad/s
 - `torque`: Nm when provided by the vendor backend
 - `status_code`: vendor-normalized ABI status byte
+
+Event output on `/<joint>/event_json`:
+
+- `command_applied`: command accepted by MotorBridge ABI
+- `command_failed`: command rejected or ABI returned an error
+- `parse_error`: JSON command could not be parsed
+- `motor_added`: lazy ABI motor handle was created
+- `watchdog`: heartbeat timeout action
+- `estop`: emergency stop command received
+- `no_feedback`: motor handle exists but feedback has not arrived
+
+Bridge status on `/bridge_status_json` publishes once per second and includes:
+
+- app/version/target metadata
+- active controller count
+- per-joint connected/enabled state
+- command/error counters
+- last error
+- last command age
 
 ## CI
 

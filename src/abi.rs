@@ -134,10 +134,7 @@ impl MotorAbi {
                     b"motor_controller_add_hightorque_motor\0",
                     unsafe extern "C" fn(*mut c_void, u16, u16, *const c_char) -> *mut c_void
                 ),
-                motor_handle_free: sym!(
-                    b"motor_handle_free\0",
-                    unsafe extern "C" fn(*mut c_void)
-                ),
+                motor_handle_free: sym!(b"motor_handle_free\0", unsafe extern "C" fn(*mut c_void)),
                 motor_handle_enable: sym!(
                     b"motor_handle_enable\0",
                     unsafe extern "C" fn(*mut c_void) -> i32
@@ -191,12 +188,21 @@ impl MotorAbi {
         }
     }
 
-    pub fn new_controller(&self, transport: &str, endpoint: &str, baud: Option<u32>) -> Result<AbiController> {
+    pub fn new_controller(
+        &self,
+        transport: &str,
+        endpoint: &str,
+        baud: Option<u32>,
+    ) -> Result<AbiController> {
         let c = CString::new(endpoint)?;
         let transport = normalize_transport(transport);
         let raw = match transport.as_str() {
-            "socketcan" | "can" | "auto" => unsafe { (self.motor_controller_new_socketcan)(c.as_ptr()) },
-            "socketcanfd" | "canfd" => unsafe { (self.motor_controller_new_socketcanfd)(c.as_ptr()) },
+            "socketcan" | "can" | "auto" => unsafe {
+                (self.motor_controller_new_socketcan)(c.as_ptr())
+            },
+            "socketcanfd" | "canfd" => unsafe {
+                (self.motor_controller_new_socketcanfd)(c.as_ptr())
+            },
             "dmserial" | "serial" => unsafe {
                 (self.motor_controller_new_dm_serial)(c.as_ptr(), baud.unwrap_or(921_600))
             },
@@ -219,19 +225,44 @@ impl MotorAbi {
         let m = CString::new(model)?;
         let raw = match normalize_vendor(vendor).as_str() {
             "damiao" => unsafe {
-                (self.motor_controller_add_damiao_motor)(controller.raw, motor_id, feedback_id, m.as_ptr())
+                (self.motor_controller_add_damiao_motor)(
+                    controller.raw,
+                    motor_id,
+                    feedback_id,
+                    m.as_ptr(),
+                )
             },
             "hexfellow" => unsafe {
-                (self.motor_controller_add_hexfellow_motor)(controller.raw, motor_id, feedback_id, m.as_ptr())
+                (self.motor_controller_add_hexfellow_motor)(
+                    controller.raw,
+                    motor_id,
+                    feedback_id,
+                    m.as_ptr(),
+                )
             },
             "myactuator" => unsafe {
-                (self.motor_controller_add_myactuator_motor)(controller.raw, motor_id, feedback_id, m.as_ptr())
+                (self.motor_controller_add_myactuator_motor)(
+                    controller.raw,
+                    motor_id,
+                    feedback_id,
+                    m.as_ptr(),
+                )
             },
             "robstride" => unsafe {
-                (self.motor_controller_add_robstride_motor)(controller.raw, motor_id, feedback_id, m.as_ptr())
+                (self.motor_controller_add_robstride_motor)(
+                    controller.raw,
+                    motor_id,
+                    feedback_id,
+                    m.as_ptr(),
+                )
             },
             "hightorque" => unsafe {
-                (self.motor_controller_add_hightorque_motor)(controller.raw, motor_id, feedback_id, m.as_ptr())
+                (self.motor_controller_add_hightorque_motor)(
+                    controller.raw,
+                    motor_id,
+                    feedback_id,
+                    m.as_ptr(),
+                )
             },
             other => return Err(anyhow!("unsupported motorbridge ABI vendor: {other}")),
         };
@@ -349,11 +380,17 @@ impl MotorAbi {
 }
 
 pub fn normalize_vendor(vendor: &str) -> String {
-    vendor.trim().to_ascii_lowercase().replace(['-', '_', ' '], "")
+    vendor
+        .trim()
+        .to_ascii_lowercase()
+        .replace(['-', '_', ' '], "")
 }
 
 pub fn normalize_transport(transport: &str) -> String {
-    transport.trim().to_ascii_lowercase().replace(['-', '_', ' '], "")
+    transport
+        .trim()
+        .to_ascii_lowercase()
+        .replace(['-', '_', ' '], "")
 }
 
 fn abi_lib_name() -> &'static str {

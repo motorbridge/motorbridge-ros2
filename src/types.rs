@@ -3,6 +3,7 @@
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MotorCommand {
     pub op: String,
+    pub request_id: Option<String>,
     pub pos: Option<f32>,
     pub vel: Option<f32>,
     pub kp: Option<f32>,

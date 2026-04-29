@@ -1,4 +1,4 @@
-﻿use std::env;
+use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -10,9 +10,16 @@ fn main() {
         .unwrap_or_else(|_| manifest_dir.join("third_party").join("motorbridge"));
 
     println!("cargo:rerun-if-env-changed=MOTORBRIDGE_SRC_DIR");
-    println!("cargo:rerun-if-changed={}", motorbridge_dir.join("Cargo.toml").display());
+    println!(
+        "cargo:rerun-if-changed={}",
+        motorbridge_dir.join("Cargo.toml").display()
+    );
     let fallback_motorbridge_dir = manifest_dir.join("..").join("motorbridge");
-    let motorbridge_dir = if motorbridge_dir.exists() { motorbridge_dir } else { fallback_motorbridge_dir };
+    let motorbridge_dir = if motorbridge_dir.exists() {
+        motorbridge_dir
+    } else {
+        fallback_motorbridge_dir
+    };
 
     let profile = env::var("PROFILE").unwrap_or_else(|_| "debug".to_string());
     let mut cmd = Command::new("cargo");
@@ -22,7 +29,9 @@ fn main() {
     }
     cmd.current_dir(&motorbridge_dir);
 
-    let status = cmd.status().expect("failed to invoke cargo for motorbridge/motor_abi");
+    let status = cmd
+        .status()
+        .expect("failed to invoke cargo for motorbridge/motor_abi");
     if !status.success() {
         panic!("building motor_abi failed in {}", motorbridge_dir.display());
     }
@@ -35,10 +44,7 @@ fn main() {
         "libmotor_abi.so"
     };
 
-    let from = motorbridge_dir
-        .join("target")
-        .join(&profile)
-        .join(lib_name);
+    let from = motorbridge_dir.join("target").join(&profile).join(lib_name);
     if !from.exists() {
         panic!("motor_abi artifact not found: {}", from.display());
     }
@@ -54,4 +60,3 @@ fn main() {
         rel_default.display()
     );
 }
-

@@ -1,37 +1,36 @@
 # ==========================================
-# MotorBridge 机器人接口定义文件 (Manifest)
-# 目标：实现硬件物理 ID 到 ROS 语义的“软映射”
+# MotorBridge robot interface manifest
+# Purpose: map physical motor IDs to ROS2/DDS joint topics.
 # ==========================================
 target_name: "flux_arm_mini"
 version: "2026.04"
 
-# 1. 控制预设 (Profiles)
-# 定义不同业务场景下的参数模板，供关节引用
+# 1. Control profiles
 control_profiles:
   - profile_name: "high_stiffness"
-    mode: "pos_vel"              # 位置-速度模式
+    mode: "pos_vel"              # position + velocity limit mode
     kp: 1.2
     kd: 0.15
     max_torque: 3.5
-    max_velocity: 6.28           # 最大转速 (rad/s)
-    max_acceleration: 10.0       # 最大加速度
-    interpolation: "linear"      # 指令插值方式
+    max_velocity: 6.28           # rad/s
+    max_acceleration: 10.0
+    interpolation: "linear"
 
   - profile_name: "soft_interaction"
-    mode: "mit"                  # MIT 力矩-位置-速度模式
+    mode: "mit"                  # MIT torque-position-velocity mode
     kp: 0.05
     kd: 0.005
     max_torque: 0.8
-    on_loss_of_comm: "coast"     # 失联策略
+    on_loss_of_comm: "coast"
 
-# 2. 关节映射与接口定义 (Joints)
+# 2. Joint mapping
 joints:
   - joint_name: "base_yaw"
     vendor: "damiao"
     transport: "socketcan"
-    bus_interface: "PCAN_USBBUS1@1000000" # Windows/PCAN 显式通道；等价于 can0@1000000
-    motor_id: 0x06               # 物理电机 ID (十六进制写法)
-    feedback_id: 0x16            # 反馈 ID (十六进制写法)
+    bus_interface: "PCAN_USBBUS1@1000000" # Windows PCAN channel. Linux example: can0.
+    motor_id: 0x06               # physical motor ID, hex is supported
+    feedback_id: 0x16            # feedback CAN ID, hex is supported
     interface_type: "expert_mit"
     direction: 1
     pos_offset: 0.0
@@ -50,12 +49,17 @@ joints:
     default_profile: "soft_interaction"
     model: "4340P"
 
-# 3. 全局安全与 ROS 桥接配置
+# 3. Safety and ROS2/DDS bridge options
 global_safety:
   heartbeat_timeout_ms: 100
-  emergency_stop_topic: "/sys/estop"
-  watchdog_strategy: "hold"
+  emergency_stop_topic: "/sys/estop"          # typed internal estop topic
+  emergency_stop_json_topic: "/sys/estop_json" # std_msgs/String: {"engaged":true}
+  watchdog_strategy: "hold"                    # hold keeps motor enabled on command timeout
 
 ros_bridge_options:
   namespace: "motorbridge"
-  qos_profile: "reliable"
+  qos_profile: "reliable"                      # reliable or best_effort
+  status_topic: "bridge_status_json"
+  enable_easter_counter: true
+  state_publish_period_ms: 20
+  feedback_warn_ms: 2000
