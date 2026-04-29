@@ -20,6 +20,8 @@ const TICK_MS: u64 = 20;
 const TOKEN_BASE_JOINT: usize = 10;
 const TOKEN_BASE_JSON: usize = 1000;
 const TOKEN_ESTOP: Token = Token(1);
+const APP_NAME: &str = "motorbridge_ros2";
+const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 struct JointRuntime {
     cfg: config::JointConfig,
@@ -39,7 +41,10 @@ struct JointRuntime {
 }
 
 fn main() -> Result<()> {
-    let manifest_path = std::env::args().nth(1).unwrap_or_else(|| "motorbridge_manifest.yaml".to_string());
+    let manifest_path = match parse_cli_args()? {
+        Some(path) => path,
+        None => return Ok(()),
+    };
     let manifest_text = std::fs::read_to_string(&manifest_path)
         .with_context(|| format!("read manifest failed: {manifest_path}"))?;
     let manifest: Manifest = serde_yaml::from_str(&manifest_text).context("parse manifest yaml failed")?;
@@ -436,4 +441,60 @@ fn publish_json_event(rt: &JointRuntime, level: &str, message: &str) {
     })
     .to_string();
     let _ = rt.json_event_writer.write(RosString { data }, None);
+}
+
+fn parse_cli_args() -> Result<Option<String>> {
+    let args: Vec<String> = std::env::args().collect();
+    let mut manifest_path: Option<String> = None;
+
+    let mut i = 1usize;
+    while i < args.len() {
+        let a = &args[i];
+        match a.as_str() {
+            "-h" | "--help" => {
+                print_help();
+                return Ok(None);
+            }
+            "-V" | "--version" => {
+                println!("{APP_NAME} {APP_VERSION}");
+                return Ok(None);
+            }
+            _ if a.starts_with('-') => {
+                return Err(anyhow!(
+                    "unknown option: {a}\nuse --help to see supported options"
+                ));
+            }
+            _ => {
+                if manifest_path.is_some() {
+                    return Err(anyhow!(
+                        "multiple manifest paths provided; only one is allowed"
+                    ));
+                }
+                manifest_path = Some(a.clone());
+            }
+        }
+        i += 1;
+    }
+
+    Ok(Some(
+        manifest_path.unwrap_or_else(|| "motorbridge_manifest.yaml".to_string()),
+    ))
+}
+
+fn print_help() {
+    println!(
+        "{APP_NAME} {APP_VERSION}\n\
+         \n\
+         Usage:\n\
+           {APP_NAME} [manifest.yaml]\n\
+           {APP_NAME} -h | --help\n\
+           {APP_NAME} -V | --version\n\
+         \n\
+         Arguments:\n\
+           manifest.yaml    optional manifest path (default: motorbridge_manifest.yaml)\n\
+         \n\
+         Examples:\n\
+           {APP_NAME}\n\
+           {APP_NAME} motorbridge_manifest.yaml"
+    );
 }
