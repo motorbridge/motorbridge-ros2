@@ -4,6 +4,53 @@ MotorBridge-ROS2 is a native ROS2/DDS bridge for MotorBridge.
 
 The bridge does not require a local ROS2 installation. It uses RustDDS to expose ROS2-compatible topics, and delegates all motor behavior to the MotorBridge ABI.
 
+## Why
+
+A single Rust binary (~20 MB) replaces a full ROS2 installation (~2 GB) on every edge device.
+
+```mermaid
+graph LR
+    subgraph Central["Central Server (ROS2)"]
+        A[ros2 topic pub]
+        B[MoveIt / RViz]
+        C[ros2 topic echo]
+    end
+
+    subgraph Edge1["Windows PC"]
+        D1[motorbridge_ros2.exe]
+        E1[PCAN → Motors]
+    end
+
+    subgraph Edge2["ARM SBC"]
+        D2[motorbridge_ros2]
+        E2[SocketCAN → Motors]
+    end
+
+    subgraph Edge3["Docker / K8s"]
+        D3["motorbridge_ros2 (~20 MB)"]
+        E3[CAN → Motors]
+    end
+
+    A -- "DDS multicast" --> D1
+    B -- "DDS multicast" --> D2
+    A -- "DDS multicast" --> D3
+    D1 -- "state feedback" --> C
+    D2 -- "state feedback" --> C
+    D3 -- "state feedback" --> C
+    D1 --> E1
+    D2 --> E2
+    D3 --> E3
+```
+
+Any machine that can run a Rust binary becomes a ROS2-compatible motor node:
+
+- **Windows** — no ROS2-on-Windows pain, just run the `.exe`
+- **ARM SBCs** — Raspberry Pi, NanoPi, Orange Pi, no cross-compiled ROS2 workspace
+- **Docker / K8s** — `~20 MB` image vs `~2 GB` ROS2 base image
+- **Central server** — standard `ros2 topic pub/echo`, MoveIt, RViz work as-is
+
+The edge device only needs the binary and a YAML manifest. ROS2 lives only where you want it.
+
 ## Features
 
 - Native Windows / Linux / macOS build
